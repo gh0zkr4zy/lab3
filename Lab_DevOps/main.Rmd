@@ -1,0 +1,1031 @@
+---
+
+title: "Laboratorio de Probabilidad y Estadística"
+author: "Tu Nombre"
+date: "`r Sys.Date()`"
+output:
+html_document:
+toc: true
+toc_float: true
+theme: readable
+---------------
+
+# Laboratorio de Probabilidad y Estadística
+
+## Métricas DevOps
+
+# 1. Generación de datos
+
+```{r setup, message=FALSE, warning=FALSE}
+
+# ============================================================
+# LIBRERÍAS
+# ============================================================
+
+library(dplyr)
+library(ggplot2)
+library(moments)
+library(knitr)
+
+# ============================================================
+# SEMILLA
+# ============================================================
+
+set.seed(42)
+
+# Número exacto de observaciones
+n <- 5000
+
+# ============================================================
+# VARIABLES CUALITATIVAS
+# ============================================================
+
+team <- sample(
+  c("Alpha", "Beta", "Gamma", "Delta"),
+  size = n,
+  replace = TRUE
+)
+
+module <- sample(
+  c("auth", "api", "ui", "db"),
+  size = n,
+  replace = TRUE
+)
+
+priority <- sample(
+  c("baja", "media", "alta", "crítica"),
+  size = n,
+  replace = TRUE,
+  prob = c(0.30, 0.40, 0.22, 0.08)
+)
+
+# ============================================================
+# TAMAÑO DEL COMMIT
+# ============================================================
+
+commit_size_loc <- round(
+  rgamma(
+    n,
+    shape = 2.2,
+    scale = 75
+  ) + 10
+)
+
+# ============================================================
+# EFECTO DEL MÓDULO
+# ============================================================
+
+module_effect <- ifelse(
+  module == "auth", 8,
+  ifelse(
+    module == "api", 12,
+    ifelse(
+      module == "ui", 5,
+      15
+    )
+  )
+)
+
+# ============================================================
+# TIEMPO DE BUILD
+# Commits grandes -> mayor tiempo de build
+# ============================================================
+
+build_time_min <- 4 +
+  0.055 * commit_size_loc +
+  module_effect +
+  rnorm(n, mean = 0, sd = 5)
+
+build_time_min <- pmax(
+  build_time_min,
+  1
+)
+
+build_time_min <- round(
+  build_time_min,
+  2
+)
+
+# ============================================================
+# NÚMERO DE BUGS
+# Commits grandes -> más bugs
+# ============================================================
+
+lambda_bugs <- 0.5 +
+  0.008 * commit_size_loc +
+  ifelse(
+    priority %in% c("alta", "crítica"),
+    0.8,
+    0
+  ) +
+  ifelse(
+    module == "db",
+    0.7,
+    0
+  )
+
+lambda_bugs <- pmax(
+  lambda_bugs,
+  0.1
+)
+
+num_bugs <- rpois(
+  n,
+  lambda = lambda_bugs
+)
+
+# ============================================================
+# COBERTURA DE PRUEBAS
+# Más bugs -> menor cobertura
+# ============================================================
+
+test_coverage_pct <- 85 -
+  0.035 * commit_size_loc -
+  2.5 * num_bugs +
+  rnorm(n, mean = 0, sd = 7)
+
+test_coverage_pct <- pmax(
+  test_coverage_pct,
+  20
+)
+
+test_coverage_pct <- pmin(
+  test_coverage_pct,
+  99
+)
+
+test_coverage_pct <- round(
+  test_coverage_pct,
+  2
+)
+
+# ============================================================
+# TIEMPO DE DEPLOY
+# Builds grandes -> deploy más largo
+# ============================================================
+
+deploy_time_min <- 2 +
+  0.20 * build_time_min +
+  0.012 * commit_size_loc +
+  rnorm(n, mean = 0, sd = 2)
+
+deploy_time_min <- pmax(
+  deploy_time_min,
+  0.5
+)
+
+deploy_time_min <- round(
+  deploy_time_min,
+  2
+)
+
+# ============================================================
+# EFECTO DE PRIORIDAD
+# ============================================================
+
+priority_effect <- ifelse(
+  priority == "baja",
+  0,
+  ifelse(
+    priority == "media",
+    3,
+    ifelse(
+      priority == "alta",
+      8,
+      15
+    )
+  )
+)
+
+# ============================================================
+# EFECTO DE EQUIPO
+# ============================================================
+
+team_effect <- ifelse(
+  team == "Alpha",
+  0,
+  ifelse(
+    team == "Beta",
+    2,
+    ifelse(
+      team == "Gamma",
+      4,
+      1
+    )
+  )
+)
+
+# ============================================================
+# RESOLUCIÓN DE TICKETS
+# ============================================================
+
+ticket_resolution_h <- 2 +
+  priority_effect +
+  team_effect +
+  0.15 * num_bugs +
+  rgamma(
+    n,
+    shape = 2,
+    scale = 3
+  )
+
+ticket_resolution_h <- pmax(
+  ticket_resolution_h,
+  1
+)
+
+ticket_resolution_h <- round(
+  ticket_resolution_h,
+  2
+)
+
+# ============================================================
+# ESTADO DE DEPLOY
+# ============================================================
+
+# Riesgo basado en bugs, tiempo de deploy y cobertura
+
+risk <- 0.02 * num_bugs +
+  0.004 * deploy_time_min +
+  0.01 * (100 - test_coverage_pct)
+
+risk <- pmax(
+  risk,
+  0
+)
+
+risk <- pmin(
+  risk,
+  1
+)
+
+# Probabilidades
+
+p_failed <- 0.05 +
+  0.25 * risk
+
+p_rollback <- 0.03 +
+  0.12 * risk
+
+p_success <- 1 -
+  p_failed -
+  p_rollback
+
+# Generación aleatoria
+
+u <- runif(n)
+
+deploy_status <- ifelse(
+  u <= p_success,
+  "success",
+  ifelse(
+    u <= p_success + p_failed,
+    "failed",
+    "rolled_back"
+  )
+)
+
+# ============================================================
+# DATAFRAME FINAL
+# ============================================================
+
+devops_data <- data.frame(
+  build_time_min = build_time_min,
+  deploy_time_min = deploy_time_min,
+  commit_size_loc = commit_size_loc,
+  num_bugs = num_bugs,
+  test_coverage_pct = test_coverage_pct,
+  ticket_resolution_h = ticket_resolution_h,
+  team = team,
+  module = module,
+  priority = priority,
+  deploy_status = deploy_status
+)
+
+# ============================================================
+# VERIFICACIÓN
+# ============================================================
+
+stopifnot(
+  nrow(devops_data) == 5000
+)
+
+stopifnot(
+  ncol(devops_data) == 10
+)
+
+cat(
+  "Dataset generado correctamente:",
+  nrow(devops_data),
+  "observaciones."
+)
+
+```
+
+# 2. Fase 1: Limpieza y factores
+
+```{r limpieza}
+
+# ============================================================
+# REVISIÓN DE VALORES FALTANTES
+# ============================================================
+
+valores_faltantes <- sum(
+  is.na(devops_data)
+)
+
+cat(
+  "Valores faltantes:",
+  valores_faltantes
+)
+
+# ============================================================
+# CONVERSIÓN DE VARIABLES CUALITATIVAS A FACTORES
+# ============================================================
+
+devops_data$team <- factor(
+  devops_data$team,
+  levels = c(
+    "Alpha",
+    "Beta",
+    "Gamma",
+    "Delta"
+  )
+)
+
+devops_data$module <- factor(
+  devops_data$module,
+  levels = c(
+    "auth",
+    "api",
+    "ui",
+    "db"
+  )
+)
+
+devops_data$priority <- factor(
+  devops_data$priority,
+  levels = c(
+    "baja",
+    "media",
+    "alta",
+    "crítica"
+  ),
+  ordered = TRUE
+)
+
+devops_data$deploy_status <- factor(
+  devops_data$deploy_status,
+  levels = c(
+    "success",
+    "failed",
+    "rolled_back"
+  )
+)
+
+# ============================================================
+# VERIFICACIÓN
+# ============================================================
+
+stopifnot(
+  nrow(devops_data) == 5000
+)
+
+stopifnot(
+  sum(is.na(devops_data)) == 0
+)
+
+```
+
+# 3. Fase 2: Medidas univariadas
+
+```{r estadisticas}
+
+variables_numericas <- c(
+  "build_time_min",
+  "deploy_time_min",
+  "commit_size_loc",
+  "num_bugs",
+  "test_coverage_pct",
+  "ticket_resolution_h"
+)
+
+estadisticas_univariadas <- data.frame(
+  variable = variables_numericas,
+
+  media = sapply(
+    devops_data[variables_numericas],
+    mean
+  ),
+
+  mediana = sapply(
+    devops_data[variables_numericas],
+    median
+  ),
+
+  desviacion_estandar = sapply(
+    devops_data[variables_numericas],
+    sd
+  ),
+
+  IQR = sapply(
+    devops_data[variables_numericas],
+    IQR
+  ),
+
+  asimetria = sapply(
+    devops_data[variables_numericas],
+    moments::skewness
+  ),
+
+  curtosis = sapply(
+    devops_data[variables_numericas],
+    moments::kurtosis
+  )
+)
+
+# Redondear únicamente columnas numéricas
+estadisticas_univariadas[
+  , sapply(
+    estadisticas_univariadas,
+    is.numeric
+  )
+] <- round(
+  estadisticas_univariadas[
+    , sapply(
+      estadisticas_univariadas,
+      is.numeric
+    )
+  ],
+  4
+)
+
+kable(
+  estadisticas_univariadas,
+  caption = "Medidas estadísticas univariadas"
+)
+
+```
+
+# 4. Fase 3: Regla de Sturges
+
+```{r sturges}
+
+n_datos <- nrow(
+  devops_data
+)
+
+k <- ceiling(
+  1 + 3.322 * log10(n_datos)
+)
+
+cat(
+  "Número de observaciones:",
+  n_datos,
+  "\n"
+)
+
+cat(
+  "Número de intervalos según Sturges:",
+  k
+)
+
+```
+
+# 5. Tablas de frecuencia
+
+```{r funcion-frecuencias}
+
+crear_frecuencias <- function(
+  x,
+  k
+) {
+
+  limites <- seq(
+    min(x),
+    max(x),
+    length.out = k + 1
+  )
+
+  intervalos <- cut(
+    x,
+    breaks = limites,
+    include.lowest = TRUE,
+    right = FALSE
+  )
+
+  frecuencias <- table(
+    intervalos
+  )
+
+  frecuencia_relativa <- prop.table(
+    frecuencias
+  )
+
+  frecuencia_acumulada <- cumsum(
+    frecuencias
+  )
+
+  frecuencia_relativa_acumulada <- cumsum(
+    frecuencia_relativa
+  )
+
+  tabla <- data.frame(
+    intervalo = names(
+      frecuencias
+    ),
+
+    frecuencia = as.numeric(
+      frecuencias
+    ),
+
+    frecuencia_relativa = as.numeric(
+      frecuencia_relativa
+    ),
+
+    frecuencia_acumulada = as.numeric(
+      frecuencia_acumulada
+    ),
+
+    frecuencia_relativa_acumulada =
+      as.numeric(
+        frecuencia_relativa_acumulada
+      )
+  )
+
+  return(tabla)
+}
+
+```
+
+## 5.1 Frecuencia del tiempo de Build
+
+```{r frecuencias-build}
+
+frecuencias_build <- crear_frecuencias(
+  devops_data$build_time_min,
+  k
+)
+
+frecuencias_build[
+  , sapply(
+    frecuencias_build,
+    is.numeric
+  )
+] <- round(
+  frecuencias_build[
+    , sapply(
+      frecuencias_build,
+      is.numeric
+    )
+  ],
+  4
+)
+
+kable(
+  frecuencias_build,
+  caption = "Tabla de frecuencias del tiempo de Build"
+)
+
+```
+
+## 5.2 Frecuencia del tiempo de Deploy
+
+```{r frecuencias-deploy}
+
+frecuencias_deploy <- crear_frecuencias(
+  devops_data$deploy_time_min,
+  k
+)
+
+frecuencias_deploy[
+  , sapply(
+    frecuencias_deploy,
+    is.numeric
+  )
+] <- round(
+  frecuencias_deploy[
+    , sapply(
+      frecuencias_deploy,
+      is.numeric
+    )
+  ],
+  4
+)
+
+kable(
+  frecuencias_deploy,
+  caption = "Tabla de frecuencias del tiempo de Deploy"
+)
+
+```
+
+## 5.3 Frecuencia del tamaño de Commit
+
+```{r frecuencias-commit}
+
+frecuencias_commit <- crear_frecuencias(
+  devops_data$commit_size_loc,
+  k
+)
+
+frecuencias_commit[
+  , sapply(
+    frecuencias_commit,
+    is.numeric
+  )
+] <- round(
+  frecuencias_commit[
+    , sapply(
+      frecuencias_commit,
+      is.numeric
+    )
+  ],
+  4
+)
+
+kable(
+  frecuencias_commit,
+  caption = "Tabla de frecuencias del tamaño de Commit"
+)
+
+```
+
+# 6. Fase 4: Comparación por equipos
+
+```{r comparacion-team}
+
+comparacion_team <- devops_data %>%
+  group_by(team) %>%
+  summarise(
+    n = n(),
+
+    media_build =
+      mean(build_time_min),
+
+    mediana_build =
+      median(build_time_min),
+
+    sd_build =
+      sd(build_time_min),
+
+    media_deploy =
+      mean(deploy_time_min),
+
+    mediana_deploy =
+      median(deploy_time_min),
+
+    media_commit =
+      mean(commit_size_loc),
+
+    media_bugs =
+      mean(num_bugs),
+
+    media_coverage =
+      mean(test_coverage_pct),
+
+    media_resolution =
+      mean(ticket_resolution_h),
+
+    .groups = "drop"
+  )
+
+# Redondear SOLO columnas numéricas
+comparacion_team[
+  , sapply(
+    comparacion_team,
+    is.numeric
+  )
+] <- round(
+  comparacion_team[
+    , sapply(
+      comparacion_team,
+      is.numeric
+    )
+  ],
+  4
+)
+
+kable(
+  comparacion_team,
+  caption = "Comparación de métricas por equipo"
+)
+
+```
+
+## 6.1 Estado de los despliegues por equipo
+
+```{r estado-team}
+
+estado_por_team <- table(
+  devops_data$team,
+  devops_data$deploy_status
+)
+
+kable(
+  estado_por_team,
+  caption = "Estado de los despliegues por equipo"
+)
+
+```
+
+## 6.2 Proporción de estados por equipo
+
+```{r proporcion-team}
+
+proporcion_estado_team <- prop.table(
+  estado_por_team,
+  margin = 1
+)
+
+proporcion_estado_team <- round(
+  proporcion_estado_team,
+  4
+)
+
+kable(
+  proporcion_estado_team,
+  caption = "Proporción de estados por equipo"
+)
+
+```
+
+# 7. Fase 5: Matriz de correlación de Pearson
+
+```{r correlacion}
+
+matriz_correlacion <- cor(
+  devops_data[
+    variables_numericas
+  ],
+  method = "pearson"
+)
+
+kable(
+  round(
+    matriz_correlacion,
+    4
+  ),
+  caption = "Matriz de correlación de Pearson"
+)
+
+```
+
+# 8. Fase 6: Gráficos
+
+## 8.1 Histograma del tiempo de Build
+
+```{r histograma-build, fig.width=8, fig.height=5}
+
+ggplot(
+  devops_data,
+  aes(
+    x = build_time_min
+  )
+) +
+  geom_histogram(
+    bins = k,
+    boundary = 0,
+    closed = "left"
+  ) +
+  labs(
+    title = "Distribución del tiempo de Build",
+    x = "Tiempo de Build (minutos)",
+    y = "Frecuencia"
+  ) +
+  theme_minimal()
+
+```
+
+## 8.2 Boxplot de resolución de tickets por equipo
+
+```{r boxplot-tickets, fig.width=8, fig.height=5}
+
+ggplot(
+  devops_data,
+  aes(
+    x = team,
+    y = ticket_resolution_h
+  )
+) +
+  geom_boxplot() +
+  labs(
+    title = "Resolución de Tickets por Equipo",
+    x = "Equipo",
+    y = "Tiempo de Resolución (horas)"
+  ) +
+  theme_minimal()
+
+```
+
+# 9. Comprobación de correlaciones lógicas
+
+```{r correlaciones-logicas}
+
+cor_commit_build <- cor(
+  devops_data$commit_size_loc,
+  devops_data$build_time_min,
+  method = "pearson"
+)
+
+cor_commit_bugs <- cor(
+  devops_data$commit_size_loc,
+  devops_data$num_bugs,
+  method = "pearson"
+)
+
+cor_build_deploy <- cor(
+  devops_data$build_time_min,
+  devops_data$deploy_time_min,
+  method = "pearson"
+)
+
+cor_bugs_coverage <- cor(
+  devops_data$num_bugs,
+  devops_data$test_coverage_pct,
+  method = "pearson"
+)
+
+tabla_correlaciones <- data.frame(
+  relacion = c(
+    "Tamaño de commit - Tiempo de build",
+    "Tamaño de commit - Número de bugs",
+    "Tiempo de build - Tiempo de deploy",
+    "Número de bugs - Cobertura"
+  ),
+
+  correlacion_pearson = c(
+    cor_commit_build,
+    cor_commit_bugs,
+    cor_build_deploy,
+    cor_bugs_coverage
+  )
+)
+
+tabla_correlaciones$correlacion_pearson <-
+  round(
+    tabla_correlaciones$correlacion_pearson,
+    4
+  )
+
+kable(
+  tabla_correlaciones,
+  caption = "Correlaciones entre variables DevOps"
+)
+
+```
+
+# 10. Resumen final
+
+```{r resumen}
+
+cat(
+  "============================================\n"
+)
+
+cat(
+  "RESUMEN DEL DATASET\n"
+)
+
+cat(
+  "============================================\n"
+)
+
+cat(
+  "Número de filas:",
+  nrow(devops_data),
+  "\n"
+)
+
+cat(
+  "Número de columnas:",
+  ncol(devops_data),
+  "\n"
+)
+
+cat(
+  "Intervalos de Sturges:",
+  k,
+  "\n"
+)
+
+cat(
+  "Valores faltantes:",
+  sum(is.na(devops_data)),
+  "\n"
+)
+
+```
+
+# 11. Verificaciones finales
+
+```{r verificaciones}
+
+# Exactamente 5,000 filas
+stopifnot(
+  nrow(devops_data) == 5000
+)
+
+# Exactamente 10 columnas
+stopifnot(
+  ncol(devops_data) == 10
+)
+
+# Nombres de columnas
+stopifnot(
+  identical(
+    names(devops_data),
+    c(
+      "build_time_min",
+      "deploy_time_min",
+      "commit_size_loc",
+      "num_bugs",
+      "test_coverage_pct",
+      "ticket_resolution_h",
+      "team",
+      "module",
+      "priority",
+      "deploy_status"
+    )
+  )
+)
+
+# Variables cualitativas como factores
+stopifnot(
+  is.factor(devops_data$team),
+  is.factor(devops_data$module),
+  is.factor(devops_data$priority),
+  is.factor(devops_data$deploy_status)
+)
+
+# Categorías correctas
+stopifnot(
+  identical(
+    levels(devops_data$team),
+    c(
+      "Alpha",
+      "Beta",
+      "Gamma",
+      "Delta"
+    )
+  )
+)
+
+stopifnot(
+  identical(
+    levels(devops_data$module),
+    c(
+      "auth",
+      "api",
+      "ui",
+      "db"
+    )
+  )
+)
+
+stopifnot(
+  identical(
+    levels(devops_data$priority),
+    c(
+      "baja",
+      "media",
+      "alta",
+      "crítica"
+    )
+  )
+)
+
+stopifnot(
+  identical(
+    levels(devops_data$deploy_status),
+    c(
+      "success",
+      "failed",
+      "rolled_back"
+    )
+  )
+)
+
+# Sin valores faltantes
+stopifnot(
+  sum(is.na(devops_data)) == 0
+)
+
+cat(
+  "============================================\n",
+  "✓ LABORATORIO COMPLETADO CORRECTAMENTE\n",
+  "============================================\n",
+  "✓ 5.000 observaciones\n",
+  "✓ 10 variables\n",
+  "✓ Variables cualitativas como factores\n",
+  "✓ Medidas univariadas\n",
+  "✓ Regla de Sturges\n",
+  "✓ Tablas de frecuencia\n",
+  "✓ Comparación por equipos\n",
+  "✓ Correlación de Pearson\n",
+  "✓ Histograma\n",
+  "✓ Boxplot\n",
+  "============================================"
+)
+
+```
